@@ -171,3 +171,39 @@ git commit -m "build: standalone fork - drop 21114, hide org tabs, disable updat
 git tag 1.5.2-x        # 任意新 tag
 git push fork 1.5.2-x  # fork = 你的 fork remote
 ```
+
+## 7. ⚠️ Mac 产物的「框架 Team ID 不一致」崩溃（必须处理）
+
+fork 的 CI 只给外层 app 做了 ad-hoc 自签名，但包内嵌的 `FlutterMacOS.framework` 等框架
+仍带着 **RustDesk 官网的 Team ID**。开启了库校验的 hardened runtime 会因
+「主程序 Team 为空、框架 Team 是官方的」直接拒绝加载框架 → **双击毫无反应 / 闪退**，
+报错形如：
+
+```
+dyld: Library not loaded: @rpath/FlutterMacOS.framework/...
+  Reason: ... code signature ... not valid for use in process:
+  mapping process and mapped file (non-platform) have different Team IDs
+```
+
+**修复：对整个 app 包重新统一 ad-hoc 签名**（让主程序和所有框架 Team ID 一致）：
+
+```bash
+codesign --force --deep --sign - /Applications/RustDesk.app
+xattr -rd com.apple.quarantine /Applications/RustDesk.app
+open /Applications/RustDesk.app
+```
+
+> 已把 **1.5.1-2 的 mac dmg 在 Release 里替换为重签版本**，所以从
+> https://github.com/zyl19810322/rustdesk/releases/tag/1.5.1-2 下载的 `rustdesk-1.5.1-aarch64.dmg`
+> 已可直接用（仍需右键→打开 或 系统设置→隐私与安全→仍要打开，因为是未公证的 ad-hoc 签名）。
+
+## 8. 构建历史
+
+| Tag | 包含的改动 | 状态 |
+| --- | --- | --- |
+| `1.5.1-1` | 仅 21114 自动推导移除 | 已构建（mac/windows 可用） |
+| `1.5.1-2` | 21114 移除 + 隐藏「地址簿 / 可访问的设备」+ 禁用更新检查 | 已构建；mac dmg 已重签替换 |
+
+Release 地址：https://github.com/zyl19810322/rustdesk/releases/tag/1.5.1-2
+（含 mac `aarch64.dmg`、windows `x86_64.exe` / `x86_64.msi` 等；未签名 / 未公证）。
+
