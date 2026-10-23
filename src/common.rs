@@ -1011,13 +1011,9 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
 }
 
 pub fn check_software_update() {
-    if is_custom_client() {
-        return;
-    }
-    let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
-    if config::option2bool(keys::OPTION_ENABLE_CHECK_UPDATE, &opt) {
-        std::thread::spawn(move || allow_err!(do_check_software_update()));
-    }
+    // This fork is a stand-alone build that does not track the upstream RustDesk
+    // release, so it never phones home to check for a newer version.
+    return;
 }
 
 pub(crate) fn release_id_from_update_url(update_url: &str) -> ResultType<String> {
@@ -1098,11 +1094,13 @@ pub(crate) fn display_version_from_release_id(release_id: &str) -> ResultType<St
     Ok(display_version.to_owned())
 }
 
+#[allow(dead_code)]
 fn clear_software_update_url() {
     let mut update_url = SOFTWARE_UPDATE_URL.lock().unwrap();
     *update_url = String::new();
 }
 
+#[allow(dead_code)]
 fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
     let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
     let response_url = resp.url;
@@ -1126,53 +1124,13 @@ fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
     Ok(())
 }
 
-// No need to check `danger_accept_invalid_cert` for now.
-// Because the url is always `https://api.rustdesk.com/version/latest`.
+// This fork is a stand-alone build that does not track the upstream RustDesk
+// release, so it never phones home to check for (or silently auto-install) a
+// newer version. This no-op neutralizes every update-check path: the GUI check,
+// the macOS root-service silent auto-update scheduler, and any manual trigger.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    let (request, url) =
-        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
-    let proxy_conf = Config::get_socks();
-    let tls_url = get_url_for_tls(&url, &proxy_conf);
-    let tls_type = get_cached_tls_type(tls_url);
-    let is_tls_not_cached = tls_type.is_none();
-    let tls_type = tls_type.unwrap_or(TlsType::Rustls);
-    let client = create_http_client_async(tls_type, false);
-    let latest_release_response: ResultType<_> = match client.post(&url).json(&request).send().await
-    {
-        Ok(resp) => Ok((tls_type, resp)),
-        Err(err) => {
-            if is_tls_not_cached && err.is_request() {
-                let tls_type = TlsType::NativeTls;
-                let client = create_http_client_async(tls_type, false);
-                match client.post(&url).json(&request).send().await {
-                    Ok(resp) => Ok((tls_type, resp)),
-                    Err(err) => Err(err.into()),
-                }
-            } else {
-                Err(err.into())
-            }
-        }
-    };
-    let response_bytes = match latest_release_response {
-        Ok((used_tls_type, response)) => {
-            upsert_tls_cache(tls_url, used_tls_type, false);
-            let status = response.status();
-            if !status.is_success() {
-                Err(anyhow!(
-                    "Software update check failed with HTTP status: {status}"
-                ))
-            } else {
-                response.bytes().await.map_err(|err| err.into())
-            }
-        }
-        Err(err) => Err(err),
-    };
-    let result = response_bytes.and_then(process_software_update_check_response);
-    if result.is_err() {
-        clear_software_update_url();
-    }
-    result
+    Ok(())
 }
 
 #[inline]

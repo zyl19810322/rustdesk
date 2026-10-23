@@ -1,7 +1,13 @@
-# RustDesk 自定义构建（去除 21114 依赖）
+# RustDesk 独立分支构建（去除组织 / 官方依赖）
 
-本仓库在官方 `rustdesk/rustdesk` 基础上做了一处最小改动：**让客户端不再自动连接 21114 端口**，
-其余行为（rendezvous、relay、NAT 打洞、设备发现等）完全不变。
+本仓库在官方 `rustdesk/rustdesk` 基础上做了最小化定制，目标是做一个**不连接任何官方 /
+RustDesk 组织基础设施的独立分支**：
+
+- 不再自动连接 21114 端口（旧版 API / admin 控制台）；
+- 移除「地址簿 / Address book」和「可访问的设备 / Accessible devices」两个依赖 API 服务器的标签页；
+- 彻底关闭软件更新检查（GUI 检查、macOS 后台静默自动更新、手动检查），永不连官方服务器比对版本。
+
+其余 P2P 行为（rendezvous、relay、NAT 打洞、设备发现、文件 / 剪贴板传输等）保持官方原样。
 
 ## 1. 改动说明
 
@@ -14,6 +20,62 @@
 - **如果你自有 API 服务器**：仍可像官方一样**显式配置** API 地址（Windows 许可文件名里的
   `api` 字段，或通过服务器配置里的 `api` 参数），该路径不受影响。
 - 同步更新了对应的单元测试 `test_api_server_from_bare_ipv6_rendezvous_server`。
+
+### 1.1 本次追加的定制：移除两个标签页 + 关闭更新检查
+
+在 21114 改动基础上，又做了两处定制（同样基于上游 `398364f`）：
+
+**(a) 移除「地址簿 / Address book」和「可访问的设备 / Accessible devices」标签页**
+
+- 这两个标签页依赖 API 服务器（即已移除的 21114）提供后端，没有它就没有意义。
+- 改动位置：`src/flutter_ffi.rs` 的 `is_disable_ab()` 与 `is_disable_group_panel()`，
+  现在**直接返回 `true`**（与官方「许可证禁用该功能」语义一致），从而让这两个标签页不显示。
+  配套的 `ab_model.dart` / `group_model.dart` 的 early-return 逻辑也自然生效，无需改动。
+- **未动账号系统**：登录按钮、账户设置页等仍保留（只是没有后端时会连不上，不影响其它功能）。
+
+**(b) 彻底关闭软件更新检查**
+
+- 桌面端更新检查有两条链路，最终都走到 `src/common.rs` 的 `do_check_software_update()`：
+  1. GUI 启动检查：`main.dart → checkUpdate() → mainGetSoftwareUpdateUrl() → check_software_update()`；
+  2. macOS 后台静默自动更新（以 root 运行的 LaunchDaemon 每天执行）：
+     `start_auto_update_macos → check_update_as_root → do_check_software_update()`。
+- `do_check_software_update()` 现已改为 **no-op（直接 `Ok(())`，不发任何网络请求）**；
+  GUI 入口 `check_software_update()` 也置为 no-op；并从桌面设置里移除了
+  「Check for software update on startup」和「Auto update」两个开关（避免留下死选项）。
+- 效果：客户端**永远不会**连 `api.rustdesk.com/version/latest` 比对版本，也**不会**弹出
+  「有新版本」提示或静默自更新。你可以一直停留在这个自定义分支，无需跟随上游升级。
+
+```diff
+  // src/flutter_ffi.rs
+  pub fn is_disable_ab() -> SyncReturn<bool> {
+-     SyncReturn(config::is_disable_ab())
++     SyncReturn(true)   // 无 API 服务器（21114 已移除）→ 地址簿无后端
+  }
+  pub fn is_disable_group_panel() -> SyncReturn<bool> {
+-     SyncReturn(LocalConfig::get_option("disable-group-panel") == "Y")
++     SyncReturn(true)   // 无 API 服务器（21114 已移除）→ 可访问设备无后端
+  }
+
+  // src/common.rs —— 更新检查核心入口改为 no-op
+  pub fn check_software_update() {
+-     if is_custom_client() { return; }
+-     let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
+-     if config::option2bool(keys::OPTION_ENABLE_CHECK_UPDATE, &opt) {
+-         std::thread::spawn(move || allow_err!(do_check_software_update()));
+-     }
++     return;   // 独立分支：永不连官方服务器检查更新
+  }
+  pub async fn do_check_software_update() -> ... {
+-     // 整段网络请求（连 api.rustdesk.com 比对版本）...
++     Ok(())    // no-op
+  }
+
+  // flutter/lib/desktop/pages/desktop_setting_page.dart —— 删除两个死开关
+-     if (!isWeb && !bind.isCustomClient())
+-       _OptionCheckBox(context, 'Check for software update on startup', ...);
+-     if (showAutoUpdate)
+-       _OptionCheckBox(context, 'Auto update', ...);
+```
 
 改动 diff（基于上游 `398364f`）：
 
@@ -98,11 +160,14 @@ python3 build.py --flutter
 > 提示：官方 tag 流程会同时构建 iOS / Android / Linux。如果只想跑 mac + windows，
 > 可以按需精简 `flutter-build.yml` 的 matrix（非必须，默认全平台也能用）。
 
-## 6. 提交本仓库改动（可选）
+## 6. 提交 / 推送本仓库改动
 
-当前已切到 `main` 分支（基于上游 `398364f`），21114 改动尚未提交。若要走第 5 步的 CI：
+所有定制已提交到本地 `main` 分支（基于上游 `398364f`），并推送到你的 fork `master`。
+若本地又改了代码，提交并打 tag 触发 CI：
 
 ```bash
-git add src/common.rs
-git commit -m "build: drop auto 21114 (legacy API server) derivation"
+git add -A
+git commit -m "build: standalone fork - drop 21114, hide org tabs, disable update check"
+git tag 1.5.2-x        # 任意新 tag
+git push fork 1.5.2-x  # fork = 你的 fork remote
 ```
