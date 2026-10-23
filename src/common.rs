@@ -1249,17 +1249,10 @@ fn get_api_server_(api: String, custom: String) -> String {
     }
     let s0 = get_custom_rendezvous_server(custom);
     if !s0.is_empty() {
-        let s = crate::increase_port(&s0, -2);
-        if s == s0 {
-            let s = if hbb_common::is_ipv6_str(&s) && !s.starts_with('[') {
-                format!("[{s}]")
-            } else {
-                s
-            };
-            return format!("http://{}:{}", s, config::RENDEZVOUS_PORT - 2);
-        } else {
-            return format!("http://{}", s);
-        }
+        // Do not auto-derive the legacy API server on port 21114.
+        // Callers that actually run an API server can still set one
+        // explicitly via the `api` argument / license field above.
+        return "".to_owned();
     }
     "https://admin.rustdesk.com".to_owned()
 }
@@ -3216,9 +3209,11 @@ mod tests {
 
     #[test]
     fn test_api_server_from_bare_ipv6_rendezvous_server() {
+        // Custom rendezvous server no longer auto-derives the legacy
+        // API server on port 21114; an explicit API server is required.
         assert_eq!(
             get_api_server_("".to_owned(), "2001:db8::1".to_owned()),
-            "http://[2001:db8::1]:21114"
+            ""
         );
     }
 
